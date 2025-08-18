@@ -1,0 +1,24 @@
+{
+  "mode": "sftp",
+  "labels": { "source": "autodl", "target": "downloaded" },
+  "rutorrent": { "uri": "https://user:pass@rutorrent-url/plugins/httprpc/action.php" }, 
+  "sftp": {
+    "backend": "ftps",
+
+    "dest_dir": "/destination",
+
+    "ftps_host": "ftps_host",
+    "ftps_user": "ftps_user",
+    "ftps_password": "ftps_password",
+    "ftps_port": 9979,
+    "ftps_pasv": true,
+    "ftps_tls_verify": false,       
+    "ftps_timeout": 30,
+    "ftp_root": "/downloads",        
+    "ftps_blocksize": 262144, 
+    "ftps_segments": 8,
+    "ftps_min_seg_size": 8388608,
+    "ftps_file_concurrency": 1
+  },
+  "skip_if_exists_same_size": true
+}
