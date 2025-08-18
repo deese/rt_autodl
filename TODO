@@ -1,0 +1,6 @@
+* Allow multiple label - destination pairs
+* Re-enable the JSON comments 
+* Now requires rutorrent (RPC) to do the relabeling. Can we rely only in the rtorrent RPC? 
+* Write documentation? (:D)
+
+
