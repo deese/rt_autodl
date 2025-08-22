@@ -7,7 +7,7 @@ import os
 from typing import Any, Dict, Tuple
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn, TransferSpeedColumn
+from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn, TransferSpeedColumn, SpinnerColumn
 
 try:
     from .config import load_config
@@ -97,7 +97,6 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
         console.print(f"[red][ERR][/red] {name}: relabel {mapping['source']} -> {dst_label} failed: {e}")
         vprint(console, f"Label error for {thash}: {repr(e)}")
 
-
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser()
@@ -135,7 +134,7 @@ def main() -> None:
         BarColumn(),
         TransferSpeedColumn(),
         TextColumn("{task.completed}/{task.total}"),
-        TimeRemainingColumn(),
+        TimeRemainingColumn(elapsed_when_finished=True),
         console=console,
         transient=False,
     ) as progress:
