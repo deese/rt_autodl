@@ -26,7 +26,10 @@
     "ftps_blocksize": 262144, 
     "ftps_segments": 8,
     "ftps_min_seg_size": 8388608,
-    "ftps_file_concurrency": 1
+    "ftps_file_concurrency": 1,
+    "ftps_connection_pool_size": 8,
+    "ftps_max_connection_age": 300,
+    "ftps_max_idle_time": 60
   },
   "skip_if_exists_same_size": true,
   
@@ -35,5 +38,12 @@
     "use_dotenv": false,
     "dotenv_path": null,
     "keyring_service": "torrenter"
+  },
+  
+  // Optional: Logging configuration
+  "logging": {
+    "level": "INFO",
+    "json_output": false,
+    "console_output": true
   }
 }
