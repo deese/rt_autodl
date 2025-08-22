@@ -41,13 +41,18 @@ def ftps_plan_from_files(torrent: Dict[str, Any], ftp_root: str, rtorrent_root: 
     Return a list of (remote_abs_path_under_ftp_root, rel_path_for_dest, size).
     - rel path: prefer file['path'] or file['name']; otherwise derive from frozen_path using rtorrent_root.
     - size: prefer file size fields; if missing AND it's a single-file torrent, fallback to torrent['bytes_total'].
+    
+    For multi-file torrents, use the torrent name as the base folder path.
     """
     files = torrent.get("files") or []
     is_single = len(files) == 1
 
     plan: List[Tuple[str, str, int]] = []
     ftp_root = posix_norm(ftp_root or "/")
-
+    
+    # For multi-file torrents, use the torrent name as the base folder
+    torrent_name = torrent.get("name", "")
+    
     for f in files:
         rel = f.get("path") or f.get("name")
         if not rel:
@@ -67,7 +72,15 @@ def ftps_plan_from_files(torrent: Dict[str, Any], ftp_root: str, rtorrent_root: 
             if isinstance(v, int) and v > 0:
                 size = v
 
-        remote = join_posix(ftp_root, rel)
+        # For multi-file torrents, prepend the torrent name to create the full remote path
+        if not is_single and torrent_name:
+            # Extract just the filename from the rel path for multi-file torrents
+            filename = posixpath.basename(rel)
+            remote_rel = join_posix(torrent_name, filename)
+        else:
+            remote_rel = rel
+            
+        remote = join_posix(ftp_root, remote_rel)
         plan.append((remote, rel, int(size)))
     return plan
 
