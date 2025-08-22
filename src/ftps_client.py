@@ -74,14 +74,16 @@ def ftps_plan_from_files(torrent: Dict[str, Any], ftp_root: str, rtorrent_root: 
 
         # For multi-file torrents, prepend the torrent name to create the full remote path
         if not is_single and torrent_name:
-            # Extract just the filename from the rel path for multi-file torrents
-            filename = posixpath.basename(rel)
-            remote_rel = join_posix(torrent_name, filename)
+            # Preserve the full relative path structure for multi-file torrents
+            remote_rel = join_posix(torrent_name, rel)
+            # Also preserve the folder structure in the destination path
+            dest_rel = join_posix(torrent_name, rel)
         else:
             remote_rel = rel
+            dest_rel = rel
             
         remote = join_posix(ftp_root, remote_rel)
-        plan.append((remote, rel, int(size)))
+        plan.append((remote, dest_rel, int(size)))
     return plan
 
 
@@ -166,6 +168,18 @@ def _ftps_resolve_remote(s: Dict[str, Any], ctx: ssl.SSLContext, remote: str) ->
                                     rsize = 0
                                     found = True
                                     break
+                            # If still not found, try partial matching for nested files
+                            if not found:
+                                for n in names:
+                                    # Check if this is a directory that might contain our file
+                                    if "/" not in n and n != rname:
+                                        continue
+                                    # Check if the filename appears anywhere in the path
+                                    if rname in n or rname_lower in n.lower():
+                                        rname = n.split("/")[-1] if "/" in n else n
+                                        rsize = 0
+                                        found = True
+                                        break
                             if not found:
                                 raise FileNotFoundError(f"{rname} not in listing")
                     except Exception as e:
