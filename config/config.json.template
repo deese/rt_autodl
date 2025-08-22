@@ -1,15 +1,23 @@
 {
-  "mode": "sftp",
-  "labels": { "source": "autodl", "target": "downloaded" },
+  // Multiple label mappings with individual destination directories
+  "label_mappings": [
+    { "source": "autodl", "target": "downloaded", "dest_dir": "/data/inbox" },
+    { "source": "movies", "target": "processed", "dest_dir": "/data/movies" },
+    { "source": "tv", "target": "processed", "dest_dir": "/data/tv" }
+  ],
+  
+  // Legacy single label format (still supported)
+  // "labels": { "source": "autodl", "target": "downloaded" },
+  
   "rutorrent": { "uri": "https://user:pass@rutorrent-url/plugins/httprpc/action.php" }, 
   "sftp": {
     "backend": "ftps",
 
-    "dest_dir": "/destination",
+    "dest_dir": "/destination", // default if not specified in label_mappings
 
     "ftps_host": "ftps_host",
     "ftps_user": "ftps_user",
-    "ftps_password": "ftps_password",
+    "ftps_password": "ftps_password", // or use "env:FTP_PASSWORD" or "keyring:service/user"
     "ftps_port": 9979,
     "ftps_pasv": true,
     "ftps_tls_verify": false,       
@@ -20,5 +28,12 @@
     "ftps_min_seg_size": 8388608,
     "ftps_file_concurrency": 1
   },
-  "skip_if_exists_same_size": true
+  "skip_if_exists_same_size": true,
+  
+  // Optional: Secret management
+  "secrets": {
+    "use_dotenv": false,
+    "dotenv_path": null,
+    "keyring_service": "torrenter"
+  }
 }
