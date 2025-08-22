@@ -8,6 +8,7 @@ import os
 import posixpath
 import ssl
 import threading
+import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
 from rich.console import Console
@@ -17,6 +18,31 @@ try:
     from .utils import retry_on_failure, vprint, ensure_dir, posix_norm, join_posix
 except ImportError:
     from utils import retry_on_failure, vprint, ensure_dir, posix_norm, join_posix
+
+
+def _normalize_filename(filename: str) -> str:
+    """Normalize filename for comparison by handling Unicode normalization and encoding issues."""
+    if not filename:
+        return filename
+    
+    # First normalize Unicode to NFC form
+    normalized = unicodedata.normalize('NFC', filename)
+    
+    # Handle common mojibake cases where UTF-8 was decoded as latin-1
+    # This handles cases like "guardiÃ¡n" -> "guardián"
+    try:
+        # Try to detect if this might be mojibake by encoding as latin-1 and decoding as utf-8
+        if 'Ã' in normalized:  # Common mojibake indicator
+            latin1_bytes = normalized.encode('latin-1')
+            utf8_decoded = latin1_bytes.decode('utf-8')
+            # If successful and the result is different, use the corrected version
+            if utf8_decoded != normalized:
+                normalized = utf8_decoded
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        # If conversion fails, keep the original normalized version
+        pass
+    
+    return normalized
 
 
 def _rel_from_frozen(frozen: str, rtorrent_root: Optional[str]) -> Optional[str]:
@@ -149,33 +175,50 @@ def _ftps_resolve_remote(s: Dict[str, Any], ctx: ssl.SSLContext, remote: str) ->
                         if rname in names:
                             rsize = 0
                         else:
-                            # Try case-insensitive match
-                            rname_lower = rname.lower()
+                            # Normalize the target filename for comparison
+                            rname_norm = _normalize_filename(rname)
+                            rname_lower = rname_norm.lower()
                             found = False
+                            
                             for n in names:
-                                if n.lower() == rname_lower:
+                                n_norm = _normalize_filename(n)
+                                n_lower = n_norm.lower()
+                                
+                                # Try normalized exact match
+                                if n_norm == rname_norm:
                                     rname = n  # Use the actual filename from server
                                     rsize = 0
                                     found = True
                                     break
-                                elif n.endswith("/" + rname):
+                                # Try case-insensitive normalized match
+                                elif n_lower == rname_lower:
+                                    rname = n  # Use the actual filename from server
+                                    rsize = 0
+                                    found = True
+                                    break
+                                # Try path-based matches with normalization
+                                elif n.endswith("/" + rname) or n_norm.endswith("/" + rname_norm):
                                     rname = n.split("/")[-1]  # Extract filename
                                     rsize = 0
                                     found = True
                                     break
-                                elif n.lower().endswith("/" + rname_lower):
+                                elif n_lower.endswith("/" + rname_lower):
                                     rname = n.split("/")[-1]  # Extract filename
                                     rsize = 0
                                     found = True
                                     break
+                            
                             # If still not found, try partial matching for nested files
                             if not found:
                                 for n in names:
                                     # Check if this is a directory that might contain our file
                                     if "/" not in n and n != rname:
                                         continue
-                                    # Check if the filename appears anywhere in the path
-                                    if rname in n or rname_lower in n.lower():
+                                    n_norm = _normalize_filename(n)
+                                    n_lower = n_norm.lower()
+                                    # Check if the filename appears anywhere in the path with normalization
+                                    if (rname in n or rname_norm in n_norm or 
+                                        rname_lower in n_lower):
                                         rname = n.split("/")[-1] if "/" in n else n
                                         rsize = 0
                                         found = True
