@@ -170,47 +170,58 @@ def _ftps_resolve_remote(s: Dict[str, Any], ctx: ssl.SSLContext, remote: str) ->
                     rsize = ftp.size(rname)
                 except Exception:
                     try:
-                        names = ftp.nlst()
+                        # Try MLSD first for structured listing with file sizes
+                        file_entries = {}
+                        try:
+                            for entry_name, entry_facts in ftp.mlsd():
+                                if entry_facts.get('type') == 'file':
+                                    file_size = int(entry_facts.get('size', 0))
+                                    file_entries[entry_name] = file_size
+                        except (ftplib.error_perm, AttributeError):
+                            # Fallback to NLST if MLSD not supported
+                            names = ftp.nlst()
+                            file_entries = {name: 0 for name in names}
+                        
                         # Try exact match first
-                        if rname in names:
-                            rsize = 0
+                        if rname in file_entries:
+                            rsize = file_entries[rname]
                         else:
                             # Normalize the target filename for comparison
                             rname_norm = _normalize_filename(rname)
                             rname_lower = rname_norm.lower()
                             found = False
                             
-                            for n in names:
+                            for n, n_size in file_entries.items():
                                 n_norm = _normalize_filename(n)
                                 n_lower = n_norm.lower()
                                 
                                 # Try normalized exact match
                                 if n_norm == rname_norm:
                                     rname = n  # Use the actual filename from server
-                                    rsize = 0
+                                    rsize = n_size
                                     found = True
                                     break
                                 # Try case-insensitive normalized match
                                 elif n_lower == rname_lower:
                                     rname = n  # Use the actual filename from server
-                                    rsize = 0
+                                    rsize = n_size
                                     found = True
                                     break
                                 # Try path-based matches with normalization
                                 elif n.endswith("/" + rname) or n_norm.endswith("/" + rname_norm):
                                     rname = n.split("/")[-1]  # Extract filename
-                                    rsize = 0
+                                    rsize = n_size
                                     found = True
                                     break
                                 elif n_lower.endswith("/" + rname_lower):
                                     rname = n.split("/")[-1]  # Extract filename
-                                    rsize = 0
+                                    rsize = n_size
                                     found = True
                                     break
                             
                             # If still not found, try partial matching for nested files
                             if not found:
-                                for n in names:
+                                for n, n_size in file_entries.items():
                                     # Check if this is a directory that might contain our file
                                     if "/" not in n and n != rname:
                                         continue
@@ -220,7 +231,7 @@ def _ftps_resolve_remote(s: Dict[str, Any], ctx: ssl.SSLContext, remote: str) ->
                                     if (rname in n or rname_norm in n_norm or 
                                         rname_lower in n_lower):
                                         rname = n.split("/")[-1] if "/" in n else n
-                                        rsize = 0
+                                        rsize = n_size
                                         found = True
                                         break
                             if not found:
