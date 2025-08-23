@@ -152,7 +152,9 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 duration = time.time() - start_time
                 
                 # Log successful transfer
-                logger.transfer_complete(thash, rel, size, duration)
+                # For multi-file torrents, show only the filename to match progress bar behavior
+                log_filename = os.path.basename(rel) if '/' in rel else rel
+                logger.transfer_complete(thash, log_filename, size, duration)
                 stats.complete_transfer(transfer_id, success=True)
                 # Add newline after progress bar completion
                 progress.console.print()
@@ -163,7 +165,9 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 error_msg = str(e)
                 
                 # Log transfer error
-                logger.transfer_error(thash, rel, error_msg)
+                # For multi-file torrents, show only the filename to match progress bar behavior
+                log_filename = os.path.basename(rel) if '/' in rel else rel
+                logger.transfer_error(thash, log_filename, error_msg)
                 stats.complete_transfer(transfer_id, success=False, error=error_msg)
                 transfer_errors.append((rel, error_msg))
                 return False
@@ -173,7 +177,9 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 
         except Exception as e:
             error_msg = str(e)
-            logger.transfer_error(thash, rel, error_msg)
+            # For multi-file torrents, show only the filename to match progress bar behavior
+            log_filename = os.path.basename(rel) if '/' in rel else rel
+            logger.transfer_error(thash, log_filename, error_msg)
             stats.complete_transfer(transfer_id, success=False, error=error_msg)
             transfer_errors.append((rel, error_msg))
             return False
