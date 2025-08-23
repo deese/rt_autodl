@@ -143,7 +143,9 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 return True
 
             # Not existing: create a bar and download
-            task = progress.add_task(f"[white]{rel}", total=size if size > 0 else None)
+            # For multi-file torrents, show only the filename in the progress bar to avoid long paths
+            display_name = os.path.basename(rel) if '/' in rel else rel
+            task = progress.add_task(f"[white]{display_name}", total=size if size > 0 else None)
             try:
                 start_time = time.time()
                 ftps_get(cfg, remote, dst, size, progress, task)
@@ -152,6 +154,8 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 # Log successful transfer
                 logger.transfer_complete(thash, rel, size, duration)
                 stats.complete_transfer(transfer_id, success=True)
+                # Add newline after progress bar completion
+                progress.console.print()
                 return True
                 
             except Exception as e:
