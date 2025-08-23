@@ -151,112 +151,114 @@ def _ftps_resolve_remote(cfg: Dict[str, Any], remote: str) -> Tuple[str, str, st
     with pool.get_connection() as ftp:
         try:
             ftp_root = posix_norm(s.get("ftp_root", "/"))
-        remote = posix_norm(remote)
+            remote = posix_norm(remote)
 
-        # Derive relative path under ftp_root if possible
-        rel = remote
-        if remote.startswith(ftp_root.rstrip("/") + "/") or remote == ftp_root:
-            rel = remote[len(ftp_root):].lstrip("/")
-        else:
-            # fallback: treat remote as a relative path already
-            rel = remote.lstrip("/")
+            # Derive relative path under ftp_root if possible
+            rel = remote
+            if remote.startswith(ftp_root.rstrip("/") + "/") or remote == ftp_root:
+                rel = remote[len(ftp_root):].lstrip("/")
+            else:
+                # fallback: treat remote as a relative path already
+                rel = remote.lstrip("/")
 
-        parts = [p for p in rel.split("/") if p]
-        tails = []
-        for i in range(len(parts)):
-            tails.append("/".join(parts[i:]))
-        if not tails:
-            tails = [rel]
+            parts = [p for p in rel.split("/") if p]
+            tails = []
+            for i in range(len(parts)):
+                tails.append("/".join(parts[i:]))
+            if not tails:
+                tails = [rel]
 
-        last_err = None
-        for tail in tails:
-            cand = join_posix(ftp_root, tail)
-            rdir, rname = posixpath.split(cand)
-            try:
-                if rdir and rdir not in {"", "/"}:
-                    ftp.cwd(rdir)
+            last_err = None
+            for tail in tails:
+                cand = join_posix(ftp_root, tail)
+                rdir, rname = posixpath.split(cand)
                 try:
-                    rsize = ftp.size(rname)
-                except Exception:
+                    if rdir and rdir not in {"", "/"}:
+                        ftp.cwd(rdir)
                     try:
-                        # Try MLSD first for structured listing with file sizes
-                        file_entries = {}
+                        rsize = ftp.size(rname)
+                    except Exception:
                         try:
-                            for entry_name, entry_facts in ftp.mlsd():
-                                if entry_facts.get('type') == 'file':
-                                    file_size = int(entry_facts.get('size', 0))
-                                    file_entries[entry_name] = file_size
-                        except (ftplib.error_perm, AttributeError):
-                            # Fallback to NLST if MLSD not supported
-                            names = ftp.nlst()
-                            file_entries = {name: 0 for name in names}
+                            # Try MLSD first for structured listing with file sizes
+                            file_entries = {}
+                            try:
+                                for entry_name, entry_facts in ftp.mlsd():
+                                    if entry_facts.get('type') == 'file':
+                                        file_size = int(entry_facts.get('size', 0))
+                                        file_entries[entry_name] = file_size
+                            except (ftplib.error_perm, AttributeError):
+                                # Fallback to NLST if MLSD not supported
+                                names = ftp.nlst()
+                                file_entries = {name: 0 for name in names}
                         
-                        # Try exact match first
-                        if rname in file_entries:
-                            rsize = file_entries[rname]
-                        else:
-                            # Normalize the target filename for comparison
-                            rname_norm = _normalize_filename(rname)
-                            rname_lower = rname_norm.lower()
-                            found = False
+                            # Try exact match first
+                            if rname in file_entries:
+                                rsize = file_entries[rname]
+                            else:
+                                # Normalize the target filename for comparison
+                                rname_norm = _normalize_filename(rname)
+                                rname_lower = rname_norm.lower()
+                                found = False
                             
-                            for n, n_size in file_entries.items():
-                                n_norm = _normalize_filename(n)
-                                n_lower = n_norm.lower()
-                                
-                                # Try normalized exact match
-                                if n_norm == rname_norm:
-                                    rname = n  # Use the actual filename from server
-                                    rsize = n_size
-                                    found = True
-                                    break
-                                # Try case-insensitive normalized match
-                                elif n_lower == rname_lower:
-                                    rname = n  # Use the actual filename from server
-                                    rsize = n_size
-                                    found = True
-                                    break
-                                # Try path-based matches with normalization
-                                elif n.endswith("/" + rname) or n_norm.endswith("/" + rname_norm):
-                                    rname = n.split("/")[-1]  # Extract filename
-                                    rsize = n_size
-                                    found = True
-                                    break
-                                elif n_lower.endswith("/" + rname_lower):
-                                    rname = n.split("/")[-1]  # Extract filename
-                                    rsize = n_size
-                                    found = True
-                                    break
-                            
-                            # If still not found, try partial matching for nested files
-                            if not found:
                                 for n, n_size in file_entries.items():
-                                    # Check if this is a directory that might contain our file
-                                    if "/" not in n and n != rname:
-                                        continue
                                     n_norm = _normalize_filename(n)
                                     n_lower = n_norm.lower()
-                                    # Check if the filename appears anywhere in the path with normalization
-                                    if (rname in n or rname_norm in n_norm or 
-                                        rname_lower in n_lower):
-                                        rname = n.split("/")[-1] if "/" in n else n
+                                    
+                                    # Try normalized exact match
+                                    if n_norm == rname_norm:
+                                        rname = n  # Use the actual filename from server
                                         rsize = n_size
                                         found = True
                                         break
-                            if not found:
-                                raise FileNotFoundError(f"{rname} not in listing")
-                    except Exception as e:
-                        last_err = e
-                        continue
-                if rsize is None:
-                    rsize = 0
-                return (cand, rdir, rname, int(rsize))
-            except Exception as e:
-                last_err = e
-                continue
-        if last_err:
-            raise FileNotFoundError(f"No matching remote path for {remote}: {last_err}")
-        raise FileNotFoundError(f"No matching remote path for {remote}")
+                                    # Try case-insensitive normalized match
+                                    elif n_lower == rname_lower:
+                                        rname = n  # Use the actual filename from server
+                                        rsize = n_size
+                                        found = True
+                                        break
+                                    # Try path-based matches with normalization
+                                    elif n.endswith("/" + rname) or n_norm.endswith("/" + rname_norm):
+                                        rname = n.split("/")[-1]  # Extract filename
+                                        rsize = n_size
+                                        found = True
+                                        break
+                                    elif n_lower.endswith("/" + rname_lower):
+                                        rname = n.split("/")[-1]  # Extract filename
+                                        rsize = n_size
+                                        found = True
+                                        break
+                            
+                                # If still not found, try partial matching for nested files
+                                if not found:
+                                    for n, n_size in file_entries.items():
+                                        # Check if this is a directory that might contain our file
+                                        if "/" not in n and n != rname:
+                                            continue
+                                        n_norm = _normalize_filename(n)
+                                        n_lower = n_norm.lower()
+                                        # Check if the filename appears anywhere in the path with normalization
+                                        if (rname in n or rname_norm in n_norm or 
+                                            rname_lower in n_lower):
+                                            rname = n.split("/")[-1] if "/" in n else n
+                                            rsize = n_size
+                                            found = True
+                                            break
+                                if not found:
+                                    raise FileNotFoundError(f"{rname} not in listing")
+                        except Exception as e:
+                            last_err = e
+                            continue
+                    if rsize is None:
+                        rsize = 0
+                    return (cand, rdir, rname, int(rsize))
+                except Exception as e:
+                    last_err = e
+                    continue
+            if last_err:
+                raise FileNotFoundError(f"No matching remote path for {remote}: {last_err}")
+            raise FileNotFoundError(f"No matching remote path for {remote}")
+        except Exception as e:
+            raise FileNotFoundError(f"Error resolving remote path for {remote}: {e}")
         
         # Connection is automatically returned to pool by context manager
 
