@@ -134,9 +134,10 @@ def ftps_connect(s: Dict[str, Any], ctx: ssl.SSLContext):
     ftp.prot_p()
     ftp.set_pasv(pasv)
     try:
-        ftp.voidcmd('TYPE I')  # ensure binary
-    except Exception:
-        pass
+        ftp.voidcmd('TYPE I')  # ensure binary mode - critical for resuming transfers
+    except Exception as e:
+        # Log the warning but continue, as some servers might default to binary
+        print(f"Warning: Failed to set binary mode, may cause resume issues: {e}")
     return ftp
 
 

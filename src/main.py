@@ -156,8 +156,6 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 log_filename = os.path.basename(rel) if '/' in rel else rel
                 logger.transfer_complete(thash, log_filename, size, duration)
                 stats.complete_transfer(transfer_id, success=True)
-                # Add newline after progress bar completion
-                progress.console.print()
                 return True
                 
             except Exception as e:
@@ -193,18 +191,23 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
             if not _one(item):
                 transfer_success = False
 
-    # Relabel after transfers (always attempt, even if downloads were skipped)
-    try:
-        relabel(rt, thash, dst_label, cfg, console)
-        logger.relabel_success(thash, name, mapping['source'], dst_label)
-        console.print(f"[magenta][LABEL][/magenta] {name}: {mapping['source']} -> {dst_label}")
-        
-    except Exception as e:
-        error_msg = str(e)
-        logger.relabel_error(thash, name, mapping['source'], dst_label, error_msg)
-        console.print(f"[red][ERR][/red] {name}: relabel {mapping['source']} -> {dst_label} failed: {e}")
-        vprint(console, f"Label error for {thash}: {repr(e)}")
-        transfer_success = False
+    # Only relabel after successful transfers (or when files were skipped due to same size)
+    if transfer_success:
+        try:
+            relabel(rt, thash, dst_label, cfg, console)
+            logger.relabel_success(thash, name, mapping['source'], dst_label)
+            console.print(f"[magenta][LABEL][/magenta] {name}: {mapping['source']} -> {dst_label}")
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.relabel_error(thash, name, mapping['source'], dst_label, error_msg)
+            console.print(f"[red][ERR][/red] {name}: relabel {mapping['source']} -> {dst_label} failed: {e}")
+            vprint(console, f"Label error for {thash}: {repr(e)}")
+            transfer_success = False
+    else:
+        logger.info(f"Skipping relabel due to transfer errors: {name}", 
+                   torrent_name=name, torrent_hash=thash)
+        console.print(f"[yellow][SKIP][/yellow] {name}: relabel skipped due to transfer errors")
     
     # Log summary for this torrent
     if transfer_errors:

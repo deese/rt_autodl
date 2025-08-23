@@ -92,11 +92,13 @@ class FTPSConnectionPool:
             ftp.prot_p()
             ftp.set_pasv(pasv)
             
-            # Ensure binary mode
+            # Ensure binary mode - critical for resuming transfers
             try:
                 ftp.voidcmd('TYPE I')
-            except Exception:
-                pass
+                self._logger.debug("Set FTPS connection to binary mode")
+            except Exception as e:
+                self._logger.warning(f"Failed to set binary mode, may cause resume issues: {e}")
+                # Still proceed as some servers might default to binary
             
             self._stats.record_connection_attempt(success=True)
             return ftp
