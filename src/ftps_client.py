@@ -150,7 +150,7 @@ def _ftps_resolve_remote(cfg: Dict[str, Any], remote: str) -> Tuple[str, str, st
     
     with pool.get_connection() as ftp:
         try:
-        ftp_root = posix_norm(s.get("ftp_root", "/"))
+            ftp_root = posix_norm(s.get("ftp_root", "/"))
         remote = posix_norm(remote)
 
         # Derive relative path under ftp_root if possible
