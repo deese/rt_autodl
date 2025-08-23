@@ -13,6 +13,11 @@ from typing import Any, Dict, Tuple
 
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn, TransferSpeedColumn, SpinnerColumn
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.text import Text
+from collections import deque
 
 try:
     from .config import load_config
@@ -37,6 +42,30 @@ except ImportError:
 # Global variables for lock management
 _lock_fd = None
 _lockfile = None
+
+class LogCapture:
+    """Captures console output for display in the logging panel."""
+    def __init__(self, max_lines=50):
+        self.lines = deque(maxlen=max_lines)
+        self.console = Console(file=self, width=80)
+    
+    def write(self, text):
+        if text.strip():
+            self.lines.append(text.rstrip())
+        return len(text)
+    
+    def flush(self):
+        pass
+    
+    def get_text(self):
+        """Get formatted text for display in panel."""
+        if not self.lines:
+            return Text("No messages yet...", style="dim")
+        
+        text = Text()
+        for line in self.lines:
+            text.append(line + "\n")
+        return text
 
 
 def cleanup_lock():
@@ -274,10 +303,20 @@ def main() -> None:
     # Set global flags
     set_flags(verbose=bool(args.verbose), dry_run=bool(args.dry_run))
 
-    console = Console()
-    if args.verbose:
-        logger.debug("Verbose mode enabled")
-        console.log("Verbose enabled")
+    # Skip UI panels if JSON logs are enabled
+    if args.json_logs:
+        console = Console()
+        if args.verbose:
+            logger.debug("Verbose mode enabled")
+            console.log("Verbose enabled")
+    else:
+        # Initialize log capture and panel UI
+        log_capture = LogCapture()
+        console = log_capture.console
+        
+        if args.verbose:
+            logger.debug("Verbose mode enabled")
+            console.print("Verbose enabled")
     
     # Log session start
     log_session_start()
@@ -317,35 +356,83 @@ def main() -> None:
     successful_torrents = 0
     
     try:
-        with Progress(
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TransferSpeedColumn(),
-            TextColumn("{task.completed}/{task.total}"),
-            TimeRemainingColumn(elapsed_when_finished=True),
-            console=console,
-            transient=False,
-        ) as progress:
-            with logger.operation_timer("torrent_processing"):
-                for mapping in cfg["label_mappings"]:
-                    source_label = mapping["source"]
-                    
-                    with logger.operation_timer("torrent_query", label=source_label):
-                        torrents = list_by_label(rt, source_label)
-                    
-                    if not torrents:
-                        logger.info(f"No torrents found for label: {source_label}", label=source_label)
-                        console.print(f"[yellow]No torrents with label '{source_label}'.[/yellow]")
-                        continue
-                    
-                    total_torrents += len(torrents)
-                    logger.info(f"Processing torrents for label: {source_label}", 
-                               label=source_label, torrent_count=len(torrents))
-                    console.print(f"[blue]Processing {len(torrents)} torrents with label '{source_label}'[/blue]")
-                    
-                    for t in torrents:
-                        if process_torrent(cfg, rt, t, mapping, console, progress):
-                            successful_torrents += 1
+        if args.json_logs:
+            # Use original progress bar for JSON mode
+            with Progress(
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TransferSpeedColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeRemainingColumn(elapsed_when_finished=True),
+                console=console,
+                transient=False,
+            ) as progress:
+                with logger.operation_timer("torrent_processing"):
+                    for mapping in cfg["label_mappings"]:
+                        source_label = mapping["source"]
+                        
+                        with logger.operation_timer("torrent_query", label=source_label):
+                            torrents = list_by_label(rt, source_label)
+                        
+                        if not torrents:
+                            logger.info(f"No torrents found for label: {source_label}", label=source_label)
+                            console.print(f"[yellow]No torrents with label '{source_label}'.[/yellow]")
+                            continue
+                        
+                        total_torrents += len(torrents)
+                        logger.info(f"Processing torrents for label: {source_label}", 
+                                   label=source_label, torrent_count=len(torrents))
+                        console.print(f"[blue]Processing {len(torrents)} torrents with label '{source_label}'[/blue]")
+                        
+                        for t in torrents:
+                            if process_torrent(cfg, rt, t, mapping, console, progress):
+                                successful_torrents += 1
+        else:
+            # Use panel-based UI
+            layout = Layout()
+            layout.split_column(
+                Layout(name="progress", size=8),
+                Layout(name="logs")
+            )
+            
+            progress = Progress(
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TransferSpeedColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeRemainingColumn(elapsed_when_finished=True),
+                transient=False,
+            )
+            
+            def make_layout():
+                layout["progress"].update(Panel(progress, title="[bold cyan]Progress", border_style="cyan"))
+                layout["logs"].update(Panel(log_capture.get_text(), title="[bold green]Activity Log", border_style="green"))
+                return layout
+            
+            with Live(make_layout(), refresh_per_second=10, screen=True) as live:
+                with logger.operation_timer("torrent_processing"):
+                    for mapping in cfg["label_mappings"]:
+                        source_label = mapping["source"]
+                        
+                        with logger.operation_timer("torrent_query", label=source_label):
+                            torrents = list_by_label(rt, source_label)
+                        
+                        if not torrents:
+                            logger.info(f"No torrents found for label: {source_label}", label=source_label)
+                            console.print(f"[yellow]No torrents with label '{source_label}'.[/yellow]")
+                            live.update(make_layout())
+                            continue
+                        
+                        total_torrents += len(torrents)
+                        logger.info(f"Processing torrents for label: {source_label}", 
+                                   label=source_label, torrent_count=len(torrents))
+                        console.print(f"[blue]Processing {len(torrents)} torrents with label '{source_label}'[/blue]")
+                        live.update(make_layout())
+                        
+                        for t in torrents:
+                            if process_torrent(cfg, rt, t, mapping, console, progress):
+                                successful_torrents += 1
+                            live.update(make_layout())
         
         if total_torrents == 0:
             logger.warning("No torrents found for any configured labels")
