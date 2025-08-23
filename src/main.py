@@ -9,7 +9,7 @@ import os
 import signal
 import sys
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn, TransferSpeedColumn, SpinnerColumn
@@ -18,6 +18,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 from collections import deque
+from dataclasses import dataclass
 
 try:
     from .config import load_config
@@ -90,8 +91,68 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
-def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[str, Any], console: Console, progress: Progress) -> bool:
-    """Process a single torrent for download and relabeling. Returns True if successful."""
+def quiet_print(message: str):
+    """Print minimal output for quiet mode directly to stdout."""
+    print(message, flush=True)
+
+
+class ProgressManager:
+    """Manages progress bars with unlimited rolling log of completed tasks."""
+    
+    def __init__(self, progress: Progress):
+        self.progress = progress
+        self.completed_task_ids = []  # Keep all completed tasks
+        self.task_descriptions = {}   # Store original descriptions
+        
+    def add_task(self, description: str, **kwargs):
+        """Add a new task and return its ID."""
+        task_id = self.progress.add_task(description, **kwargs)
+        self.task_descriptions[task_id] = description
+        return task_id
+        
+    def update(self, task_id, **kwargs):
+        """Update a task's progress."""
+        if task_id is not None:
+            self.progress.update(task_id, **kwargs)
+    
+    def complete_task(self, task_id, success: bool = True, error: Optional[str] = None):
+        """Mark a task as completed and add completion indicator."""
+        if task_id is None or task_id not in self.task_descriptions:
+            return
+            
+        original_desc = self.task_descriptions[task_id]
+        
+        # Update the task to show completion status
+        try:
+            if success:
+                self.progress.update(task_id, description=f"✓ {original_desc}")
+            else:
+                error_msg = f" - {error}" if error else ""
+                self.progress.update(task_id, description=f"✗ {original_desc}{error_msg}")
+        except:
+            pass
+            
+        # Track this as completed (keep all completed tasks)
+        self.completed_task_ids.append(task_id)
+        
+        # Note: No cleanup - we keep all completed tasks visible
+        
+    def remove_task(self, task_id):
+        """Remove a task entirely (for immediate cleanup)."""
+        if task_id is not None:
+            try:
+                self.progress.remove_task(task_id)
+                self.task_descriptions.pop(task_id, None)
+            except:
+                pass
+
+
+def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[str, Any], console: Console, progress, quiet: bool = False) -> bool:
+    """Process a single torrent for download and relabeling. Returns True if successful.
+    
+    Args:
+        progress: Either a Progress instance or ProgressManager instance
+    """
     logger = get_logger()
     stats = get_stats_tracker()
     
@@ -101,18 +162,27 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
     
     if not thash:
         logger.warning(f"Skipping {name}: missing hash", torrent_name=name)
-        console.print(f"[yellow][SKIP][/yellow] {name}: missing hash")
+        if quiet:
+            quiet_print(f"SKIP {name}: missing hash")
+        else:
+            console.print(f"[yellow][SKIP][/yellow] {name}: missing hash")
         return False
         
     if not is_completed(t):
         logger.info(f"Skipping {name}: not completed", torrent_name=name, torrent_hash=thash)
-        console.print(f"[cyan][SKIP][/cyan] {name}: not completed")
+        if quiet:
+            quiet_print(f"SKIP {name}: not completed")
+        else:
+            console.print(f"[cyan][SKIP][/cyan] {name}: not completed")
         return False
 
     files = t.get("files") or []
     if not files:
         logger.warning(f"Skipping {name}: no file list", torrent_name=name, torrent_hash=thash)
-        console.print(f"[yellow][WARN][/yellow] {name}: no file list; cannot plan FTPS paths")
+        if quiet:
+            quiet_print(f"SKIP {name}: no file list")
+        else:
+            console.print(f"[yellow][WARN][/yellow] {name}: no file list; cannot plan FTPS paths")
         return False
 
     s = cfg["sftp"]
@@ -120,7 +190,10 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
     plan = ftps_plan_from_files(t, s.get("ftp_root", "/"), s.get("rtorrent_root"))
     if not plan:
         logger.warning(f"Skipping {name}: empty transfer plan", torrent_name=name, torrent_hash=thash)
-        console.print(f"[yellow][WARN][/yellow] {name}: nothing to transfer (ftps plan empty)")
+        if quiet:
+            quiet_print(f"SKIP {name}: empty transfer plan")
+        else:
+            console.print(f"[yellow][WARN][/yellow] {name}: nothing to transfer (ftps plan empty)")
         return False
 
     ensure_dir(dest_root)
@@ -130,8 +203,11 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
     
     # Log transfer start
     logger.transfer_start(name, thash, len(plan), total_size, dest_root)
-    console.print(f"[green][PROC][/green] {name}: {len(plan)} files -> {dest_root} [ftps]")
-    vprint(console, f"Plan sample: {plan[:3]}")
+    if quiet:
+        quiet_print(f"DOWNLOADING {name}")
+    else:
+        console.print(f"[green][PROC][/green] {name}: {len(plan)} files -> {dest_root} [ftps]")
+        vprint(console, f"Plan sample: {plan[:3]}")
     
     stats.record_torrent_processed()
 
@@ -174,7 +250,7 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
             # Not existing: create a bar and download
             # For multi-file torrents, show only the filename in the progress bar to avoid long paths
             display_name = os.path.basename(rel) if '/' in rel else rel
-            task = progress.add_task(f"[white]{display_name}", total=size if size > 0 else None)
+            task = None if quiet else progress.add_task(f"[white]{display_name}", total=size if size > 0 else None)
             try:
                 start_time = time.time()
                 ftps_get(cfg, remote, dst, size, progress, task)
@@ -185,6 +261,12 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 log_filename = os.path.basename(rel) if '/' in rel else rel
                 logger.transfer_complete(thash, log_filename, size, duration)
                 stats.complete_transfer(transfer_id, success=True)
+                
+                # Mark task as completed successfully
+                if task is not None and hasattr(progress, 'complete_task'):
+                    progress.complete_task(task, success=True)
+                elif task is not None:
+                    progress.remove_task(task)
                 return True
                 
             except Exception as e:
@@ -197,10 +279,13 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
                 logger.transfer_error(thash, log_filename, error_msg)
                 stats.complete_transfer(transfer_id, success=False, error=error_msg)
                 transfer_errors.append((rel, error_msg))
-                return False
                 
-            finally:
-                progress.remove_task(task)
+                # Mark task as completed with error
+                if task is not None and hasattr(progress, 'complete_task'):
+                    progress.complete_task(task, success=False, error=error_msg)
+                elif task is not None:
+                    progress.remove_task(task)
+                return False
                 
         except Exception as e:
             error_msg = str(e)
@@ -225,18 +310,27 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
         try:
             relabel(rt, thash, dst_label, cfg, console)
             logger.relabel_success(thash, name, mapping['source'], dst_label)
-            console.print(f"[magenta][LABEL][/magenta] {name}: {mapping['source']} -> {dst_label}")
+            if quiet:
+                quiet_print(f"OK {name}")
+            else:
+                console.print(f"[magenta][LABEL][/magenta] {name}: {mapping['source']} -> {dst_label}")
             
         except Exception as e:
             error_msg = str(e)
             logger.relabel_error(thash, name, mapping['source'], dst_label, error_msg)
-            console.print(f"[red][ERR][/red] {name}: relabel {mapping['source']} -> {dst_label} failed: {e}")
-            vprint(console, f"Label error for {thash}: {repr(e)}")
+            if quiet:
+                quiet_print(f"ERROR {name}: relabel failed - {e}")
+            else:
+                console.print(f"[red][ERR][/red] {name}: relabel {mapping['source']} -> {dst_label} failed: {e}")
+                vprint(console, f"Label error for {thash}: {repr(e)}")
             transfer_success = False
     else:
         logger.info(f"Skipping relabel due to transfer errors: {name}", 
                    torrent_name=name, torrent_hash=thash)
-        console.print(f"[yellow][SKIP][/yellow] {name}: relabel skipped due to transfer errors")
+        if quiet:
+            quiet_print(f"ERROR {name}: transfer errors")
+        else:
+            console.print(f"[yellow][SKIP][/yellow] {name}: relabel skipped due to transfer errors")
     
     # Log summary for this torrent
     if transfer_errors:
@@ -277,6 +371,10 @@ def main() -> None:
     parser.add_argument("--json-logs", action="store_true", help="Output structured JSON logs")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="Set logging level")
+    parser.add_argument("--quiet", action="store_true", 
+                       help="Quiet mode for cron: minimal stdout output, full logging to disk only")
+    parser.add_argument("--no-wait", action="store_true",
+                       help="Don't wait for user keypress at the end")
     args = parser.parse_args()
 
     # Check for single instance
@@ -292,8 +390,8 @@ def main() -> None:
     # Initialize logging
     logger = init_logger(
         level=args.log_level,
-        json_output=args.json_logs,
-        console_output=not args.json_logs  # Use console output unless JSON requested
+        json_output=args.json_logs or args.quiet,  # Enable JSON output for quiet mode
+        console_output=not (args.json_logs or args.quiet)  # Disable console output in quiet mode
     )
     
     # Initialize statistics tracking
@@ -303,8 +401,13 @@ def main() -> None:
     # Set global flags
     set_flags(verbose=bool(args.verbose), dry_run=bool(args.dry_run))
 
-    # Skip UI panels if JSON logs are enabled
-    if args.json_logs:
+    # Handle different output modes
+    if args.quiet:
+        # Quiet mode: minimal stdout output, no Rich formatting
+        console = Console(file=sys.stdout, width=80, legacy_windows=False)
+        if args.verbose:
+            logger.debug("Verbose mode enabled")
+    elif args.json_logs:
         console = Console()
         if args.verbose:
             logger.debug("Verbose mode enabled")
@@ -356,7 +459,37 @@ def main() -> None:
     successful_torrents = 0
     
     try:
-        if args.json_logs:
+        if args.quiet:
+            # Quiet mode: no progress bars or UI
+            class DummyProgress:
+                """Dummy progress object for quiet mode."""
+                def add_task(self, *args, **kwargs):
+                    return None
+                def remove_task(self, task_id):
+                    pass
+                def update(self, task_id, **kwargs):
+                    pass
+            
+            progress = DummyProgress()
+            with logger.operation_timer("torrent_processing"):
+                for mapping in cfg["label_mappings"]:
+                    source_label = mapping["source"]
+                    
+                    with logger.operation_timer("torrent_query", label=source_label):
+                        torrents = list_by_label(rt, source_label)
+                    
+                    if not torrents:
+                        logger.info(f"No torrents found for label: {source_label}", label=source_label)
+                        continue
+                    
+                    total_torrents += len(torrents)
+                    logger.info(f"Processing torrents for label: {source_label}", 
+                               label=source_label, torrent_count=len(torrents))
+                    
+                    for t in torrents:
+                        if process_torrent(cfg, rt, t, mapping, console, progress, quiet=True):
+                            successful_torrents += 1
+        elif args.json_logs:
             # Use original progress bar for JSON mode
             with Progress(
                 TextColumn("[bold blue]{task.description}"),
@@ -366,7 +499,9 @@ def main() -> None:
                 TimeRemainingColumn(elapsed_when_finished=True),
                 console=console,
                 transient=False,
-            ) as progress:
+            ) as raw_progress:
+                progress_manager = ProgressManager(raw_progress)
+                progress = progress_manager
                 with logger.operation_timer("torrent_processing"):
                     for mapping in cfg["label_mappings"]:
                         source_label = mapping["source"]
@@ -385,17 +520,17 @@ def main() -> None:
                         console.print(f"[blue]Processing {len(torrents)} torrents with label '{source_label}'[/blue]")
                         
                         for t in torrents:
-                            if process_torrent(cfg, rt, t, mapping, console, progress):
+                            if process_torrent(cfg, rt, t, mapping, console, progress, quiet=False):
                                 successful_torrents += 1
         else:
             # Use panel-based UI
             layout = Layout()
             layout.split_column(
-                Layout(name="progress", size=8),
-                Layout(name="logs")
+                Layout(name="progress", ratio=1),
+                Layout(name="logs", ratio=1)
             )
             
-            progress = Progress(
+            raw_progress = Progress(
                 TextColumn("[bold blue]{task.description}"),
                 BarColumn(),
                 TransferSpeedColumn(),
@@ -403,9 +538,11 @@ def main() -> None:
                 TimeRemainingColumn(elapsed_when_finished=True),
                 transient=False,
             )
+            progress_manager = ProgressManager(raw_progress)
+            progress = progress_manager
             
             def make_layout():
-                layout["progress"].update(Panel(progress, title="[bold cyan]Progress", border_style="cyan"))
+                layout["progress"].update(Panel(raw_progress, title="[bold cyan]Progress", border_style="cyan"))
                 layout["logs"].update(Panel(log_capture.get_text(), title="[bold green]Activity Log", border_style="green"))
                 return layout
             
@@ -430,13 +567,14 @@ def main() -> None:
                         live.update(make_layout())
                         
                         for t in torrents:
-                            if process_torrent(cfg, rt, t, mapping, console, progress):
+                            if process_torrent(cfg, rt, t, mapping, console, progress, quiet=False):
                                 successful_torrents += 1
                             live.update(make_layout())
         
         if total_torrents == 0:
             logger.warning("No torrents found for any configured labels")
-            console.print("[yellow]No torrents found for any configured labels.[/yellow]")
+            if not args.quiet:
+                console.print("[yellow]No torrents found for any configured labels.[/yellow]")
         else:
             logger.info(f"Processing complete: {successful_torrents}/{total_torrents} successful", 
                        total_torrents=total_torrents, successful=successful_torrents)
@@ -459,8 +597,8 @@ def main() -> None:
         logger.info("Session statistics", **session_summary)
         logger.info("Connection pool statistics", **pool_stats)
         
-        # Display summary if not in JSON mode
-        if not args.json_logs:
+        # Display summary if not in JSON or quiet mode
+        if not (args.json_logs or args.quiet):
             console.print("\n[bold green]Session Summary[/bold green]")
             console.print(f"Duration: {session_summary['duration']:.1f}s")
             console.print(f"Torrents processed: {session_summary['torrents_processed']}")
@@ -473,6 +611,31 @@ def main() -> None:
         # Close connection pool
         close_connection_pool()
         logger.debug("Connection pool closed")
+        
+        # Wait for user input if configured (skip in quiet mode, cron jobs, or if disabled)
+        should_wait = True
+        
+        # Don't wait if explicitly disabled via command line
+        if args.no_wait:
+            should_wait = False
+            
+        # Don't wait in quiet mode (likely cron job)
+        if args.quiet:
+            should_wait = False
+            
+        # Check config file setting
+        ui_config = cfg.get("ui", {})
+        if not ui_config.get("wait", True):  # Default to True if not specified
+            should_wait = False
+            
+        # Wait for user keypress if enabled
+        if should_wait:
+            if not (args.json_logs or args.quiet):
+                console.print("\n[bold yellow]Press any key to exit...[/bold yellow]")
+            try:
+                input()  # Wait for any key press
+            except (KeyboardInterrupt, EOFError):
+                pass  # Allow Ctrl+C or EOF to exit
 
 
 if __name__ == "__main__":

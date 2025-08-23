@@ -368,7 +368,8 @@ def ftps_get(cfg: Dict[str, Any], remote: str, dst: str, size_hint: int, progres
     ranges: List[Tuple[int,int]] = []
     seg_size = rsize // segments
     
-    progress.update(task_id, total=rsize)
+    if task_id is not None:
+        progress.update(task_id, total=rsize)
 
     for i in range(segments):
         start_off = i * seg_size

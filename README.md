@@ -9,13 +9,15 @@ A Python-based autodownloader for ruTorrent seedboxes that automatically transfe
   - Size-aware duplicate detection (skips files with matching sizes)
   - Atomic downloads (.part files renamed on completion)
   - Maintains folder structure during transfers
-- **Advanced Progress Tracking**: Rich terminal interface with per-file progress bars
+- **Advanced Progress Tracking**: Rich terminal interface with persistent progress bars and 50/50 split layout
+- **Rolling Progress History**: All completed transfers remain visible with success/failure indicators
 - **High Performance**:
   - Multi-connection segmented transfers for large files
   - Concurrent file downloads
   - Optimized for large datasets
 - **Robust Label Management**: Automatically relabels torrents after successful transfers
 - **Flexible Configuration**: Support for multiple label mappings with individual destination directories
+- **Multiple Output Modes**: Interactive UI, quiet mode for automation, and structured JSON logging
 - **Security**: Built-in secret management with environment variables and keyring support
 
 ## Installation
@@ -82,6 +84,10 @@ cp config/config.json.template config/config.json
     "ftps_segments": 4,
     "ftps_min_seg_size": 8388608,
     "ftps_file_concurrency": 1
+  },
+  
+  "ui": {
+    "wait": true
   }
 }
 ```
@@ -92,6 +98,7 @@ cp config/config.json.template config/config.json
 - **Segmented Downloads**: Large files are split into multiple segments for faster transfers
 - **Concurrent Downloads**: Process multiple files simultaneously
 - **Secret Management**: Use environment variables (`env:VAR_NAME`) or keyring (`keyring:service/user`)
+- **UI Configuration**: Control wait behavior and output modes
 
 ### Performance Tuning
 
@@ -100,12 +107,30 @@ cp config/config.json.template config/config.json
 - `ftps_file_concurrency`: Number of files to download simultaneously
 - `ftps_blocksize`: Transfer buffer size (256KB default)
 
+### UI Configuration
+
+Configure user interface behavior in the `"ui"` section:
+
+```json
+{
+  "ui": {
+    "wait": true  // Wait for keypress at end (default: true)
+  }
+}
+```
+
+**Wait Behavior Priority:**
+1. `--no-wait` flag overrides all other settings
+2. `--quiet` mode never waits (for automation)
+3. Config `"ui.wait": false` disables waiting
+4. Default: waits for user input
+
 ## Usage
 
 ### Basic Usage
 
 ```bash
-python src/rt_autodl.py --config config/config.json
+python -m src.main --config config/config.json
 ```
 
 ### Command Line Options
@@ -113,19 +138,68 @@ python src/rt_autodl.py --config config/config.json
 - `--config`: Path to JSON configuration file (required)
 - `--verbose`: Enable detailed logging
 - `--dry-run`: Show planned actions without executing transfers
+- `--quiet`: Quiet mode for cron jobs (minimal stdout, full disk logging)
+- `--no-wait`: Don't wait for keypress at the end
+- `--json-logs`: Output structured JSON logs to stdout
+- `--log-level`: Set logging level (DEBUG, INFO, WARNING, ERROR)
 
 ### Examples
 
 ```bash
-# Standard operation
-python src/rt_autodl.py --config config/config.json
+# Standard operation with interactive UI
+python -m src.main --config config/config.json
+
+# Quiet mode for cron jobs
+python -m src.main --config config/config.json --quiet
+
+# Skip waiting at the end
+python -m src.main --config config/config.json --no-wait
 
 # Verbose mode for debugging
-python src/rt_autodl.py --config config/config.json --verbose
+python -m src.main --config config/config.json --verbose
 
 # Test configuration without transferring
-python src/rt_autodl.py --config config/config.json --dry-run
+python -m src.main --config config/config.json --dry-run
+
+# JSON structured logging
+python -m src.main --config config/config.json --json-logs
 ```
+
+### Output Modes
+
+#### Interactive Mode (Default)
+- **Split Layout**: 50/50 split between progress bars and activity log
+- **Rolling History**: All completed transfers remain visible with ✓/✗ indicators
+- **Real-time Progress**: Live progress bars with transfer speeds and completion times
+- **Wait for Exit**: Prompts user to press any key before exiting (configurable)
+
+#### Quiet Mode (`--quiet`)
+- **Minimal Output**: Only shows torrent names and final status (DOWNLOADING, OK, ERROR, SKIP)
+- **Full Disk Logging**: Complete structured logs written to disk/JSON
+- **Cron-Friendly**: No progress bars, no user interaction required
+- **Auto-Exit**: Never waits for user input
+
+#### JSON Mode (`--json-logs`)
+- **Structured Output**: All logs in JSON format for parsing/monitoring
+- **Progress Tracking**: Standard progress bars with JSON logging
+
+### Automation & Cron Jobs
+
+For automated execution (cron jobs, systemd timers, etc.), use quiet mode:
+
+```bash
+# Cron job example - runs every 30 minutes
+*/30 * * * * /usr/bin/python3 -m src.main --config /path/to/config.json --quiet
+
+# Systemd timer with logging
+python3 -m src.main --config config.json --quiet >> /var/log/rt_autodl.log 2>&1
+```
+
+**Quiet Mode Output Format:**
+- `DOWNLOADING filename` - Transfer started
+- `OK filename` - Successfully completed
+- `ERROR filename: reason` - Transfer failed
+- `SKIP filename: reason` - Torrent skipped
 
 ## How It Works
 
@@ -146,6 +220,9 @@ rt_autodl/
 │   ├── ftps_client.py       # FTPS transfer implementation
 │   ├── rutorrent_client.py  # ruTorrent API integration
 │   ├── secrets.py           # Secret management utilities
+│   ├── logger.py            # Structured logging system
+│   ├── stats.py             # Statistics tracking
+│   ├── connection_pool.py   # Connection pool management
 │   └── utils.py             # Common utilities and helpers
 ├── config/
 │   └── config.json.template # Configuration template

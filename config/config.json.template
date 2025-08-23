@@ -45,5 +45,10 @@
     "level": "INFO",
     "json_output": false,
     "console_output": true
+  },
+  
+  // Optional: UI configuration
+  "ui": {
+    "wait": true  // Wait for user keypress at the end (set to false to skip)
   }
 }
