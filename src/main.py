@@ -599,14 +599,16 @@ def main() -> None:
         
         # Display summary if not in JSON or quiet mode
         if not (args.json_logs or args.quiet):
-            console.print("\n[bold green]Session Summary[/bold green]")
-            console.print(f"Duration: {session_summary['duration']:.1f}s")
-            console.print(f"Torrents processed: {session_summary['torrents_processed']}")
-            console.print(f"Files: {session_summary['files']['successful']}/{session_summary['files']['attempted']} successful ({session_summary['files']['success_rate']}%)")
-            console.print(f"Data transferred: {stats.format_size(session_summary['bytes']['transferred'])}")
-            console.print(f"Average speed: {stats.format_speed(session_summary['transfer_speed']['average'])}")
-            console.print(f"Connection success rate: {session_summary['connections']['success_rate']}%")
-            console.print(f"Connection pool hit rate: {session_summary['connections']['pool_hit_rate']}%")
+            # Use a fresh console for summary to avoid interfering with screen restoration
+            summary_console = Console()
+            summary_console.print("\n[bold green]Session Summary[/bold green]")
+            summary_console.print(f"Duration: {session_summary['duration']:.1f}s")
+            summary_console.print(f"Torrents processed: {session_summary['torrents_processed']}")
+            summary_console.print(f"Files: {session_summary['files']['successful']}/{session_summary['files']['attempted']} successful ({session_summary['files']['success_rate']}%)")
+            summary_console.print(f"Data transferred: {stats.format_size(session_summary['bytes']['transferred'])}")
+            summary_console.print(f"Average speed: {stats.format_speed(session_summary['transfer_speed']['average'])}")
+            summary_console.print(f"Connection success rate: {session_summary['connections']['success_rate']}%")
+            summary_console.print(f"Connection pool hit rate: {session_summary['connections']['pool_hit_rate']}%")
         
         # Close connection pool
         close_connection_pool()
@@ -631,7 +633,9 @@ def main() -> None:
         # Wait for user keypress if enabled
         if should_wait:
             if not (args.json_logs or args.quiet):
-                console.print("\n[bold yellow]Press any key to exit...[/bold yellow]")
+                # Use a fresh console for the keypress prompt
+                prompt_console = Console()
+                prompt_console.print("\n[bold yellow]Press any key to exit...[/bold yellow]")
             try:
                 input()  # Wait for any key press
             except (KeyboardInterrupt, EOFError):
