@@ -2,8 +2,11 @@
 """Main entry point for rt_autodl."""
 
 import argparse
+import atexit
 import concurrent.futures
+import fcntl
 import os
+import sys
 import time
 from typing import Any, Dict, Tuple
 
@@ -176,6 +179,31 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
     
     return transfer_success
 
+def acquire_lock(lockfile: str) -> bool:
+    """Acquire an exclusive lock to prevent multiple instances."""
+    try:
+        lock_fd = os.open(lockfile, os.O_CREAT | os.O_TRUNC | os.O_RDWR)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        
+        # Write PID to lock file
+        os.write(lock_fd, str(os.getpid()).encode())
+        os.fsync(lock_fd)
+        
+        # Register cleanup function
+        def cleanup_lock():
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+                os.unlink(lockfile)
+            except:
+                pass
+        
+        atexit.register(cleanup_lock)
+        return True
+        
+    except (OSError, IOError):
+        return False
+
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(description="RT AutoDL - Automated torrent downloader")
@@ -186,6 +214,12 @@ def main() -> None:
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="Set logging level")
     args = parser.parse_args()
+
+    # Check for single instance
+    lockfile = "/tmp/rt_autodl.lock"
+    if not acquire_lock(lockfile):
+        print("Error: Another instance of rt_autodl is already running.", file=sys.stderr)
+        sys.exit(1)
 
     # Initialize logging
     logger = init_logger(
