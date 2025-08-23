@@ -6,6 +6,7 @@ import atexit
 import concurrent.futures
 import fcntl
 import os
+import signal
 import sys
 import time
 from typing import Any, Dict, Tuple
@@ -31,6 +32,33 @@ except ImportError:
     from logger import init_logger, get_logger, log_config_loaded, log_session_start, log_session_end
     from stats import get_stats_tracker
     from connection_pool import get_connection_pool, close_connection_pool
+
+
+# Global variables for lock management
+_lock_fd = None
+_lockfile = None
+
+
+def cleanup_lock():
+    """Clean up the lock file and file descriptor."""
+    global _lock_fd, _lockfile
+    try:
+        if _lock_fd is not None:
+            fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+            os.close(_lock_fd)
+            _lock_fd = None
+        if _lockfile is not None:
+            os.unlink(_lockfile)
+            _lockfile = None
+    except:
+        pass
+
+
+def signal_handler(signum, frame):
+    """Handle SIGINT (Ctrl+C) and other signals."""
+    print("\nReceived interrupt signal. Cleaning up...", file=sys.stderr)
+    cleanup_lock()
+    sys.exit(0)
 
 
 def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[str, Any], console: Console, progress: Progress) -> bool:
@@ -181,23 +209,17 @@ def process_torrent(cfg: Dict[str, Any], rt, t: Dict[str, Any], mapping: Dict[st
 
 def acquire_lock(lockfile: str) -> bool:
     """Acquire an exclusive lock to prevent multiple instances."""
+    global _lock_fd, _lockfile
     try:
-        lock_fd = os.open(lockfile, os.O_CREAT | os.O_TRUNC | os.O_RDWR)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fd = os.open(lockfile, os.O_CREAT | os.O_TRUNC | os.O_RDWR)
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lockfile = lockfile
         
         # Write PID to lock file
-        os.write(lock_fd, str(os.getpid()).encode())
-        os.fsync(lock_fd)
+        os.write(_lock_fd, str(os.getpid()).encode())
+        os.fsync(_lock_fd)
         
-        # Register cleanup function
-        def cleanup_lock():
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-                os.unlink(lockfile)
-            except:
-                pass
-        
+        # Register cleanup function for normal exit
         atexit.register(cleanup_lock)
         return True
         
@@ -220,6 +242,10 @@ def main() -> None:
     if not acquire_lock(lockfile):
         print("Error: Another instance of rt_autodl is already running.", file=sys.stderr)
         sys.exit(1)
+    
+    # Register signal handlers for graceful cleanup
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     # Initialize logging
     logger = init_logger(
