@@ -274,7 +274,10 @@ def get_connection_pool(config: Dict[str, Any]) -> FTPSConnectionPool:
     """Get or create the global connection pool."""
     global _connection_pool
     if _connection_pool is None:
-        max_connections = min(config.get("sftp", {}).get("ftps_file_concurrency", 1) * 2, 16)
+        file_concurrency = config.get("sftp", {}).get("ftps_file_concurrency", 1)
+        segments_per_file = config.get("sftp", {}).get("ftps_segments", 4)
+        # Need enough connections for: file_concurrency * segments_per_file + buffer
+        max_connections = min(file_concurrency * segments_per_file + 2, 32)
         _connection_pool = FTPSConnectionPool(
             config=config["sftp"],
             max_connections=max_connections
